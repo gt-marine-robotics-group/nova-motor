@@ -15,9 +15,9 @@
 #include <std_msgs/msg/float32_multi_array.h>
 #include <std_msgs/msg/bool.h>
 /*
-  GITMRG Nova V1.1 Custom BLDC Thruster Driver
+  GITMRG Nova-Motor RoboSub V2
 
-  v1.1 RoboBoat Testing
+  v2 PCB v2 Testing
 
   Resources
   https://stackoverflow.com/questions/6504211/is-it-possible-to-include-a-library-from-another-library-using-the-arduino-ide
@@ -51,6 +51,7 @@ enum states {
   WAITING_AGENT,
   AGENT_AVAILABLE,
   AGENT_CONNECTED,
+  // AGENT_ESTOP,
   AGENT_DISCONNECTED
 } state;
 
@@ -104,17 +105,7 @@ enum states {
 
 // PINS -------------------------------------------------------------
 // RC INPUT
-// const uint8_t ORX_AUX1_PIN = 2;  // checks if killed - need to figure out reset check
-// // const int ORX_GEAR_PIN = ; // Kill switch
-// const uint8_t ORX_RUDD_PIN = 3;  // yaw
-// const uint8_t ORX_ELEV_PIN = 4;  // WAM-V translate forward / backward
-// const uint8_t ORX_AILE_PIN = 5;  // WAM-V translate left / right
-// const uint8_t ORX_THRO_PIN = 6;
-
-// C - Port Fore      D - Starboard Fore
-// B - Port Center    E - Starboard Center
-// A - Port Aft       F - Starboard Aft
-// MOTOR ALFA
+// MOTOR ALPHA
 const int A_SIG_PIN = 33; // BACK LEFT VERT
 Servo motor_a;
 // MOTOR BRAVO
@@ -140,6 +131,8 @@ const int H_SIG_PIN = 41; // FRONT RIGHT HORIZ
 Servo motor_h;
 
 MS5837 depth_sensor;
+
+const int AUTO_SWITCH_PIN = 10;
 
 
 // LIGHT TOWER
@@ -209,6 +202,7 @@ float ros_cmd_e;
 float ros_cmd_f;
 float ros_cmd_g;
 float ros_cmd_h;
+int auto_enable_dbnc = 0;
 
 int led = 13;
 
@@ -341,12 +335,14 @@ rcl_subscription_t motors_sub;
 rcl_subscription_t estop_sub;
 rcl_publisher_t depth_pub;
 rcl_publisher_t debug_pub;
+rcl_publisher_t auto_pub;
 
 rclc_executor_t executor;
 std_msgs__msg__Float32MultiArray motors_msg_in;
 std_msgs__msg__Float32 msg_depth;
 std_msgs__msg__Float32MultiArray msg_motors_out;
 std_msgs__msg__Bool e_stop_active;
+std_msgs__msg__Bool msg_auto_enable;
 
 rcl_allocator_t allocator;
 rclc_support_t support;
@@ -406,6 +402,27 @@ void depth_callback(rcl_timer_t * timer, int64_t last_call_time)
   }
   // digitalWrite(led, !digitalRead(led));
   // Serial.println("Timer callback");
+}
+
+void auto_enable_callback(rcl_timer_t * timer, int64_t last_call_time)
+{
+  RCLC_UNUSED(last_call_time);
+  if (timer != NULL) {
+    RCSOFTCHECK(rcl_publish(&auto_pub, &msg_auto_enable, NULL));
+    bool enablePublish = false;
+    if (!digitalRead(AUTO_SWITCH_PIN)) {
+      auto_enable_dbnc++;
+      if (auto_enable_dbnc > 4) {
+        enablePublish = true;
+      } else {
+        enablePublish = false;
+      }
+    } else {
+      auto_enable_dbnc = 0;
+      enablePublish = false;
+    }
+    msg_auto_enable.data = enablePublish;
+  }
 }
 
 void debug_callback(rcl_timer_t * timer, int64_t last_call_time)
@@ -509,6 +526,12 @@ bool ros_create_entities() {
     "/depth_sensor"));
 
   RCCHECK(rclc_publisher_init_default(
+    &auto_pub,
+    &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
+    "/auto_enable"));
+
+  RCCHECK(rclc_publisher_init_default(
     &debug_pub,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
@@ -521,6 +544,13 @@ bool ros_create_entities() {
     RCL_MS_TO_NS(depth_timeout),
     depth_callback));
 
+  const unsigned int auto_timeout = 100;
+  RCCHECK(rclc_timer_init_default(
+    &timer0,
+    &support,
+    RCL_MS_TO_NS(auto_timeout),
+    auto_enable_callback));
+
   const unsigned int debug_timeout = 200;
   RCCHECK(rclc_timer_init_default(
     &timer,
@@ -529,7 +559,7 @@ bool ros_create_entities() {
     debug_callback));
 
   // create executor
-  RCCHECK(rclc_executor_init(&executor, &support.context, 5, &allocator));  // Increment this for more subs
+  RCCHECK(rclc_executor_init(&executor, &support.context, 6, &allocator));  // Increment this for more subs
 
   RCCHECK(rclc_executor_add_subscription(&executor, &motors_sub, &motors_msg_in, &motors_callback, ALWAYS));
   RCCHECK(rclc_executor_add_subscription(&executor, &estop_sub, &e_stop_active, &estop_callback, ON_NEW_DATA));
@@ -563,6 +593,7 @@ void ros_destroy_entities() {
   rcl_subscription_fini(&estop_sub, &node);
   rcl_publisher_fini(&depth_pub, &node);
   rcl_publisher_fini(&debug_pub, &node);
+  rcl_publisher_fini(&auto_pub, &node);
   rclc_executor_fini(&executor);
   rcl_node_fini(&node);
   rclc_support_fini(&support);
@@ -669,6 +700,7 @@ void setup() {
   // Serial.println("==================================================");
   // Serial.println("============ NOVA MOTOR INIT COMPLETE ============");
   // Serial.println("==================================================");
+  pinMode(AUTO_SWITCH_PIN, INPUT_PULLUP);
   pinMode(led, OUTPUT);
 }
 
