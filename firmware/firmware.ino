@@ -425,6 +425,12 @@ void auto_enable_callback(rcl_timer_t * timer, int64_t last_call_time)
   }
 }
 
+void timer_callback(rcl_timer_t * timer, int64_t last_call_time)
+{
+  auto_enable_callback(timer, last_call_time);
+  depth_callback(timer, last_call_time);
+}
+
 void debug_callback(rcl_timer_t * timer, int64_t last_call_time)
 {  
   RCLC_UNUSED(last_call_time);
@@ -537,19 +543,26 @@ bool ros_create_entities() {
     ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
     "/thrust_out"));
 
-  const unsigned int depth_timeout = 100;
-  RCCHECK(rclc_timer_init_default(
-    &timer0,
-    &support,
-    RCL_MS_TO_NS(depth_timeout),
-    depth_callback));
+  // const unsigned int depth_timeout = 100;
+  // RCCHECK(rclc_timer_init_default(
+  //   &timer0,
+  //   &support,
+  //   RCL_MS_TO_NS(depth_timeout),
+  //   depth_callback));
 
-  const unsigned int auto_timeout = 100;
+  // const unsigned int auto_timeout = 100;
+  // RCCHECK(rclc_timer_init_default(
+  //   &timer0,
+  //   &support,
+  //   RCL_MS_TO_NS(auto_timeout),
+  //   auto_enable_callback));
+
+  const unsigned int timeout = 100;
   RCCHECK(rclc_timer_init_default(
     &timer0,
     &support,
-    RCL_MS_TO_NS(auto_timeout),
-    auto_enable_callback));
+    RCL_MS_TO_NS(timeout),
+    timer_callback));
 
   const unsigned int debug_timeout = 200;
   RCCHECK(rclc_timer_init_default(
